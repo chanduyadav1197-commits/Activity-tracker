@@ -62,6 +62,10 @@ th{color:var(--mute);font-weight:600;font-size:12px}
 .hide{display:none!important}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20;display:flex;align-items:center;justify-content:center;padding:16px}
 #modal .card{width:100%;max-width:560px;margin:0}
+#dModal{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20;display:flex;align-items:center;justify-content:center;padding:16px}
+#dModal .card{width:100%;max-width:760px;margin:0;max-height:88vh;display:flex;flex-direction:column}
+#dBody{overflow:auto;margin-top:8px}#dBody a{color:var(--acc)}
+.kpi{cursor:pointer;user-select:none}.kpi:active{transform:scale(.98)}.kpi i{display:block;font-style:normal;font-size:11px;color:var(--pink);font-weight:600;margin-top:2px}
 textarea{height:180px;font-family:ui-monospace,monospace;font-size:12px}
 .gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:10px}
 .gal .tl{position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--soft);aspect-ratio:1;display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;padding:4px;word-break:break-all}
@@ -247,6 +251,7 @@ select:disabled{opacity:.6;cursor:not-allowed}
 
 <div id="toast" class="hide"></div>
 <datalist id="dlState"></datalist><datalist id="dlDist"></datalist><datalist id="dlAm"></datalist><datalist id="dlCon"></datalist>
+<div id="dModal" class="hide"><div class="card"><div class="row" style="justify-content:space-between"><h2 id="dTitle" style="margin:0"></h2><button class="ghost" id="dClose">Close</button></div><div id="dBody"></div></div></div>
 <div id="modal" class="hide"><div class="card"><h2>CSV export</h2><textarea id="csv" readonly></textarea><div class="row" style="margin-top:10px"><button class="primary" id="cp">Copy</button><button class="ghost" id="sv">Save .csv</button><button class="ghost" id="cl">Close</button></div></div></div>
 
 <script>
@@ -300,7 +305,7 @@ function bars(el,data,key){
 function renderDash(){
   fOptions();syncPer();const d=filtered();
   const mc=k=>d.reduce((a,l)=>a+(l.media||[]).filter(m=>k.includes(m.kind)).length,0),ap=d.reduce((a,l)=>a+(l.apps||[]).length,0),pv=mc(["image","video"]),fl=mc(["file"]);
-  $("kpis").innerHTML=[["Total activities",d.length],["Applicator attendees",fmt(ap)],["Photos & videos",pv],["Files",fl]].map(k=>`<div class="kpi"><b>${k[1]}</b><span>${k[0]}</span></div>`).join("");
+  $("kpis").innerHTML=[["Total activities",d.length,"act"],["Applicator attendees",fmt(ap),"app"],["Photos & videos",pv,"med"],["Files",fl,"fil"]].map(k=>`<div class="kpi" role="button" tabindex="0" data-k="${k[2]}"><b>${k[1]}</b><span>${k[0]}</span><i>Tap to view ›</i></div>`).join("");
   bars("cAct",d,"type");bars("cState",d,"state");bars("cAm",d,"am");bars("cCon",d,"con");bars("cDist",d,"dist");
   const months=[];const n=new Date();for(let i=5;i>=0;i--){const x=new Date(n.getFullYear(),n.getMonth()-i,1);months.push(x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0"))}
   const cnt=months.map(m=>d.filter(l=>(l.date||"").slice(0,7)===m).length),mx=Math.max(1,...cnt);
@@ -427,6 +432,21 @@ $("sv").onclick=()=>saveFile("berger-activity-tracker.csv",$("csv").value);
 $("cp").onclick=async()=>{const t=$("csv");try{await navigator.clipboard.writeText(t.value);$("cp").textContent="Copied!"}catch(e){t.select();document.execCommand&&document.execCommand("copy");$("cp").textContent="Copied"}setTimeout(()=>$("cp").textContent="Copy",1500)};
 $("nAct").style.backgroundImage=getComputedStyle($("bgA")).backgroundImage;$("actBig").src=document.querySelector(".foot img").src;
 clearForm(false);show("d");
+
+/* dashboard details popup */
+function details(k){const d=[...filtered()].sort((a,b)=>b.date.localeCompare(a.date)||b.ts-a.ts),body=$("dBody");let t,h;
+  if(k==="app"){const r=d.flatMap(l=>(l.apps||[]).map(p=>({p,l})));t="Applicator attendees · "+r.length;
+    h=r.length?`<div class="tablewrap"><table><tr><th>#</th><th>Name</th><th>Mobile</th><th>Place</th><th>Date</th><th>Activity</th><th>District</th><th>Conducted By</th></tr>${r.map(({p,l},i)=>`<tr><td>${i+1}</td><td>${esc(p.name)}</td><td>${p.mob?`<a href="tel:${esc(String(p.mob).replace(/[^\d+]/g,""))}">${esc(p.mob)}</a>`:""}</td><td>${esc(p.place||"")}</td><td>${esc(l.date)}</td><td>${esc(l.type)}</td><td>${esc(l.dist)}</td><td>${esc(l.con)}</td></tr>`).join("")}</table></div>`:'<div class="empty">No applicators listed.</div>'}
+  else if(k==="act"){t="Activities · "+d.length;
+    h=d.length?`<div class="tablewrap"><table><tr><th>Date</th><th>Activity</th><th>Shop / Location</th><th>State</th><th>District</th><th>Area Mgr</th><th>Conducted By</th><th>Applicators</th></tr>${d.map(l=>`<tr><td>${esc(l.date)}</td><td>${esc(l.type)}</td><td>${esc(l.shop||l.loc||"")}</td><td>${esc(l.state)}</td><td>${esc(l.dist)}</td><td>${esc(l.am)}</td><td>${esc(l.con)}</td><td>${(l.apps||[]).length}</td></tr>`).join("")}</table></div>`:'<div class="empty">No activities.</div>'}
+  else{const kinds=k==="med"?["image","video"]:["file"],g=d.map(l=>({l,m:(l.media||[]).filter(m=>kinds.includes(m.kind))})).filter(x=>x.m.length),n=g.reduce((a,x)=>a+x.m.length,0);
+    t=(k==="med"?"Photos & videos":"Files")+" · "+n;
+    h=n?g.map(({l,m})=>`<div style="margin-bottom:12px"><small style="color:var(--mute)">${esc(l.date)} · ${esc(l.type)} · ${esc(l.shop||l.loc||l.dist)}</small><div class="gal" style="margin-top:4px">${m.map(x=>tile(x,"view")).join("")}</div></div>`).join(""):'<div class="empty">Nothing uploaded.</div>'}
+  $("dTitle").textContent=t;body.innerHTML=h;$("dModal").classList.remove("hide");fill(body)}
+$("kpis").onclick=e=>{const c=e.target.closest("[data-k]");if(c)details(c.dataset.k)};
+$("kpis").onkeydown=e=>{const c=e.target.closest("[data-k]");if(c&&(e.key==="Enter"||e.key===" ")){e.preventDefault();details(c.dataset.k)}};
+$("dClose").onclick=()=>$("dModal").classList.add("hide");
+$("dModal").onclick=e=>{if(e.target.id==="dModal")$("dModal").classList.add("hide");const b=e.target.closest("[data-dl]");if(b)dlMedia(b.dataset.dl)};
 
 /* period filter */
 function range(){const n=new Date(),y=n.getFullYear(),m=n.getMonth(),f=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
