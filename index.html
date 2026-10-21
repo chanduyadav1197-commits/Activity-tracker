@@ -66,6 +66,7 @@ textarea{height:180px;font-family:ui-monospace,monospace;font-size:12px}
 .gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:10px}
 .gal .tl{position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--soft);aspect-ratio:1;display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;padding:4px;word-break:break-all}
 .gal img,.gal video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.gal iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
 .gal .x{position:absolute;top:3px;right:3px;background:rgba(0,0,0,.65);color:#fff;border-radius:50%;width:24px;height:24px;border:0;cursor:pointer;padding:0;font-size:12px;z-index:2}
 .up{display:inline-block}
 .addrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;align-items:end;margin-bottom:8px}
@@ -252,10 +253,14 @@ select:disabled{opacity:.6;cursor:not-allowed}
 const TYPES=["Applicator/Fitter Meet","In-shop Activity"];
 const STATES=["Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa","Gujarat","Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala","Madhya Pradesh","Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland","Odisha","Punjab","Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura","Uttar Pradesh","Uttarakhand","West Bengal","Delhi","Jammu & Kashmir","Chandigarh","Puducherry"];
 const KEY="berger-activity-tracker-v1";
+/* Team sharing: paste the Google Apps Script web app URL (ends in /exec). Leave empty to keep data on each device only. */
+const SHEET_API="";
+const MAXUP=30*1048576,DRV=/^[\w-]{10,}$/;
 let logs=[];
 try{const r=localStorage.getItem(KEY);if(r)logs=JSON.parse(r)||[]}catch(e){}
-logs=logs.map(l=>{if(l.type==="In-shop Activity Meet")l.type="In-shop Activity";l.apps=l.apps||[];l.media=l.media||[];delete l.exp;delete l.att;return l});
-const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(logs))}catch(e){}syncDb()};
+const norm=l=>{if(l.type==="In-shop Activity Meet")l.type="In-shop Activity";l.apps=l.apps||[];l.media=l.media||[];delete l.exp;delete l.att;return l};
+logs=logs.map(norm);
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(logs))}catch(e){}};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -309,18 +314,20 @@ function idb(){return dbp||(dbp=new Promise((res,rej)=>{try{const r=indexedDB.op
 async function mput(id,b){const d=await idb();return new Promise((res,rej)=>{const t=d.transaction("m","readwrite");t.objectStore("m").put(b,id);t.oncomplete=res;t.onerror=()=>rej(t.error)})}
 async function mget(id){try{const d=await idb();return await new Promise((res,rej)=>{const r=d.transaction("m").objectStore("m").get(id);r.onsuccess=()=>res(r.result||null);r.onerror=()=>rej(r.error)})}catch(e){return null}}
 async function mdel(id){try{const d=await idb();d.transaction("m","readwrite").objectStore("m").delete(id)}catch(e){}}
-const urls={},mUrl={};
-async function murl(id){if(urls[id])return urls[id];if(mUrl[id])return mUrl[id];const b=await mget(id);return b?(urls[id]=URL.createObjectURL(b)):null}
+const urls={},mObj={};
+async function murl(id){if(urls[id])return urls[id];const b=await mget(id);return b?(urls[id]=URL.createObjectURL(b)):null}
 const sz=n=>n>1048576?(n/1048576).toFixed(1)+" MB":Math.max(1,Math.round(n/1024))+" KB";
 let tt;function toast(m){const e=$("toast");e.textContent=m;e.classList.remove("hide");clearTimeout(tt);tt=setTimeout(()=>e.classList.add("hide"),2600)}
 async function saveFile(name,data){let d=null;try{d=window.claude?await window.claude.use("downloads"):null}catch(e){}
   if(!d){try{const b=data instanceof Blob?data:new Blob([data]);const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),4000);return true}catch(e){toast("Couldn’t save the file");return false}}
   try{await d.save({filename:name,data});return true}catch(e){toast(e&&e.code==="rejected_extension"?"This file type can’t be saved here":e&&e.code==="declined"?"Cancelled":"Couldn’t save the file");return false}}
 async function shrink(f){try{const bm=await createImageBitmap(f);const s=Math.min(1,1280/Math.max(bm.width,bm.height));const c=document.createElement("canvas");c.width=Math.round(bm.width*s);c.height=Math.round(bm.height*s);c.getContext("2d").drawImage(bm,0,0,c.width,c.height);return await new Promise(r=>c.toBlob(b=>r(b||f),"image/jpeg",.72))}catch(e){return f}}
-function tile(m,mode){if(m.url)mUrl[m.id]=m.url;return `<div class="tl" data-mid="${m.id}" data-k="${m.kind}">${m.kind==="file"?`<div>📄<br>${esc(m.name)}<br><small>${sz(m.size)}</small></div>`:""}${mode==="form"?`<button class="x" data-rm="${m.id}" aria-label="Remove">✕</button>`:`<button class="x" data-dl="${m.id}" aria-label="Save">⬇</button>`}</div>`}
+function tile(m,mode){mObj[m.id]=m;return `<div class="tl" data-mid="${esc(m.id)}" data-k="${esc(m.kind)}">${m.kind==="file"?`<div>📄<br>${esc(m.name)}<br><small>${sz(m.size)}</small></div>`:""}${mode==="form"?`<button class="x" data-rm="${esc(m.id)}" aria-label="Remove">✕</button>`:`<button class="x" data-dl="${esc(m.id)}" aria-label="Save">⬇</button>`}</div>`}
 async function fill(root){for(const el of root.querySelectorAll("[data-mid]")){const k=el.dataset.k;if(k==="file"||el.dataset.done)continue;el.dataset.done=1;
-  const u=await murl(el.dataset.mid);if(!u){el.insertAdjacentHTML("afterbegin","<span>Not found</span>");continue}
-  el.insertAdjacentHTML("afterbegin",k==="image"?`<img src="${u}" alt="">`:`<video src="${u}" controls preload="metadata" playsinline></video>`)}}
+  const u=await murl(el.dataset.mid),m=mObj[el.dataset.mid]||{},dv=m.drive&&DRV.test(m.drive)?m.drive:"";
+  if(u)el.insertAdjacentHTML("afterbegin",k==="image"?`<img src="${u}" alt="">`:`<video src="${u}" controls preload="metadata" playsinline></video>`);
+  else if(dv)el.insertAdjacentHTML("afterbegin",k==="image"?`<img src="https://drive.google.com/thumbnail?id=${dv}&sz=w800" alt="" loading="lazy" referrerpolicy="no-referrer">`:`<iframe src="https://drive.google.com/file/d/${dv}/preview" allow="autoplay; fullscreen" allowfullscreen></iframe>`);
+  else el.insertAdjacentHTML("afterbegin","<span>Not shared yet</span>")}}
 
 /* activity page */
 let formApps=[],formMedia=[],origMedia=[];
@@ -347,7 +354,7 @@ $("appList").onclick=e=>{const b=e.target.closest("[data-ra]");if(b){formApps.sp
 function renderMedia(){$("medCnt").textContent=formMedia.length;$("medList").innerHTML=formMedia.map(m=>tile(m,"form")).join("");fill($("medList"))}
 async function addFiles(inp,kind){
   for(const f of [...inp.files]){
-    if(f.size>80*1048576){toast(f.name+" is over 80 MB");continue}
+    const lim=SHEET_API?MAXUP:80*1048576;if(f.size>lim){toast(f.name+" is over "+lim/1048576+" MB");continue}
     let blob=f,name=f.name;
     if(kind==="image"){blob=await shrink(f);if(blob.type==="image/jpeg"&&!/\.jpe?g$/i.test(name))name=name.replace(/\.[^.]+$/,"")+".jpg"}
     const id="m"+Date.now()+Math.floor(Math.random()*99999);
@@ -357,7 +364,7 @@ async function addFiles(inp,kind){
   inp.value="";renderMedia()}
 $("upImg").onchange=e=>addFiles(e.target,"image");$("upVid").onchange=e=>addFiles(e.target,"video");$("upFil").onchange=e=>addFiles(e.target,"file");
 $("medList").onclick=e=>{const b=e.target.closest("[data-rm]");if(!b)return;const i=formMedia.findIndex(m=>m.id===b.dataset.rm);if(i>-1){if(formMedia[i].isNew)mdel(formMedia[i].id);formMedia.splice(i,1);renderMedia()}};
-async function dlMedia(id){const m=[...formMedia,...logs.flatMap(l=>l.media||[])].find(x=>x.id===id);let b=await mget(id);if(!b&&m&&m.url){try{b=await(await fetch(m.url)).blob()}catch(e){}}if(!m||!b){toast("File not found");return}await saveFile(m.name,b)}
+async function dlMedia(id){const m=mObj[id]||[...formMedia,...logs.flatMap(l=>l.media||[])].find(x=>x.id===id);if(m&&m.drive&&DRV.test(m.drive)){window.open("https://drive.google.com/file/d/"+m.drive+"/view","_blank","noopener");return}const b=await mget(id);if(!m||!b){toast("File not found");return}await saveFile(m.name,b)}
 /* form */
 function clearForm(discard){
   if(discard)formMedia.filter(m=>m.isNew).forEach(m=>mdel(m.id));
@@ -372,15 +379,17 @@ $("aSave").onclick=async()=>{
   const need=[["aDate","Date"],["aState","State"],["aDist","District"],["aAm","Area Manager"],["aCon","Conducted By"]];
   if(isShop(type))need.push(["aShop","Shop name"]);
   for(const [i,n] of need){if(!g(i)){$(i).focus();toast(n+" is required");return}}
-  const btn=$("aSave");btn.disabled=true;let as=null;try{as=window.claude?await window.claude.use("assets"):null}catch(e){}
-  const med=[];let skipped=0;if(as&&formMedia.some(m=>m.isNew&&!m.url))toast("Uploading attachments…");
-  for(const m of formMedia){const o={id:m.id,name:m.name,kind:m.kind,size:m.size};if(m.url)o.url=m.url;else if(m.isNew&&as){const b=await mget(m.id);if(b&&b.size<=20971520){try{o.url=(await as.upload(b)).url}catch(e){skipped++}}else skipped++}med.push(o)}
-  btn.disabled=false;
+  const btn=$("aSave");btn.disabled=true;
+  const med=formMedia.map(m=>{const o={id:m.id,name:m.name,kind:m.kind,size:m.size};if(m.drive)o.drive=m.drive;return o});
   const rec={id:editId||Date.now()+""+Math.floor(Math.random()*999),ts:Date.now(),type,date:g("aDate"),state:g("aState"),dist:g("aDist"),loc:g("aLoc"),am:g("aAm"),con:g("aCon"),shop:isShop(type)?g("aShop"):"",note:g("aNote"),apps:formApps.map(p=>({...p})),media:med};
   const keep=new Set(rec.media.map(m=>m.id));origMedia.filter(i=>!keep.has(i)).forEach(mdel);
   const was=editId;
   if(editId){const i=logs.findIndex(l=>l.id===editId);if(i>-1){rec.ts=logs[i].ts;logs[i]=rec}}else logs.push(rec);
-  save();toast(skipped?"Submitted. "+skipped+" file(s) couldn’t be shared (type/size) and stay on this device":was?"Activity updated":"Activity submitted");clearForm(false);renderAct()};
+  pend.add(rec.id);savePend();save();clearForm(false);renderAct();
+  if(SHEET_API){toast(med.some(m=>!m.drive)?"Uploading photos & videos…":"Sharing with the team…");await syncNow(true);
+    toast(pend.has(rec.id)?"Saved on this device – will share with the team when online":was?"Activity updated for the team":"Activity shared with the team")}
+  else toast(was?"Activity updated":"Activity submitted");
+  btn.disabled=false};
 /* list */
 function renderAct(){
   buildTabs();dls();
@@ -392,8 +401,8 @@ function renderAct(){
   <small>${esc(l.date)} · ${esc(l.dist)}, ${esc(l.state)}</small>
   <small>AM: ${esc(l.am)} · Conducted by: ${esc(l.con)}</small>
   <small>👷 ${(l.apps||[]).length} applicators · 🖼 ${cnt(l,"image")} · 🎬 ${cnt(l,"video")} · 📎 ${cnt(l,"file")}</small>${l.note?`<small>“${esc(l.note)}”</small>`:""}
-  <button class="ghost" data-x="${l.id}" style="margin-top:6px">Details ▾</button><div class="det hide" id="det-${l.id}"></div></div>
-  <button data-e="${l.id}" aria-label="Edit">✎</button><button data-d="${l.id}" aria-label="Delete">✕</button></div>`).join(""):'<div class="empty">No activities yet.</div>'}
+  <button class="ghost" data-x="${esc(l.id)}" style="margin-top:6px">Details ▾</button><div class="det hide" id="det-${esc(l.id)}"></div></div>
+  <button data-e="${esc(l.id)}" aria-label="Edit">✎</button><button data-d="${esc(l.id)}" aria-label="Delete">✕</button></div>`).join(""):'<div class="empty">No activities yet.</div>'}
 $("q").oninput=renderAct;
 $("list").onclick=e=>{
   const ed=e.target.closest("[data-e]"),dl=e.target.closest("[data-d]"),xx=e.target.closest("[data-x]"),dm=e.target.closest("[data-dl]");
@@ -405,7 +414,8 @@ $("list").onclick=e=>{
     $("aDate").value=l.date;setSD(l.state,l.dist);$("aLoc").value=l.loc||"";$("aAm").value=l.am;$("aCon").value=l.con;$("aShop").value=l.shop||"";$("aNote").value=l.note||"";
     formApps=(l.apps||[]).map(p=>({...p}));formMedia=(l.media||[]).map(m=>({...m,isNew:false}));origMedia=formMedia.map(m=>m.id);renderApps();renderMedia();
     $("formTitle").textContent="Edit activity";$("aSave").textContent="Update & submit";$("formCard").scrollIntoView({behavior:"smooth"})}
-  if(dl){if(dl.dataset.arm){const l=logs.find(x=>x.id===dl.dataset.d);(l&&l.media||[]).forEach(m=>mdel(m.id));logs=logs.filter(x=>x.id!==dl.dataset.d);save();renderAct()}else{dl.dataset.arm=1;dl.textContent="Sure?";setTimeout(()=>{dl.textContent="✕";delete dl.dataset.arm},2500)}}};
+  if(dl){if(dl.dataset.arm){const l=logs.find(x=>x.id===dl.dataset.d);(l&&l.media||[]).forEach(m=>mdel(m.id));const did=dl.dataset.d;logs=logs.filter(x=>x.id!==did);pend.delete(did);savePend();save();renderAct();
+    if(SHEET_API&&known.has(did))api({action:"delete",id:did}).then(()=>{known.delete(did);saveKnown()}).catch(()=>toast("Couldn’t delete from the team sheet"))}else{dl.dataset.arm=1;dl.textContent="Sure?";setTimeout(()=>{dl.textContent="✕";delete dl.dataset.arm},2500)}}};
 /* export */
 $("exp").onclick=()=>{
   const h=["Date","Activity","State","District","Location","Area Manager","Conducted By","Shop","Applicators","Applicator details","Images","Videos","Files","Remarks"];
@@ -444,19 +454,44 @@ $("rP").onclick=async()=>{const d=filtered();if(!d.length)return toast("No data 
   doc.autoTable({startY:y,head:[["Date","Activity","State","District","Area Mgr","Conducted by","Appl."]],body:[...d].sort((a,b)=>b.date.localeCompare(a.date)).map(l=>[l.date,l.type,l.state,l.dist,l.am,l.con,(l.apps||[]).length]),theme:"striped",headStyles:{fillColor:[200,21,111]},styles:{fontSize:8},margin:{left:32,right:32}});
   const n=doc.getNumberOfPages();for(let i=1;i<=n;i++){doc.setPage(i);doc.setFontSize(8);doc.setTextColor(120);doc.text("Page "+i+" of "+n,W-32,doc.internal.pageSize.getHeight()-16,{align:"right"})}
   if(await saveFile("Berger-Activity-Report-"+todayS()+".pdf",doc.output("arraybuffer")))toast("PDF report saved")};
-/* shared team data */
-let coll=null;const dbC={};let dbWarned=false;
-async function syncDb(){if(!coll)return;
-  for(const l of logs){if(dbC[l.id]!==undefined)continue;const j=JSON.stringify(l);dbC[l.id]=j;try{const r=await coll.doc(l.id).get();if(!r.exists)await coll.doc(l.id).set(JSON.parse(j))}catch(e){delete dbC[l.id];if(!dbWarned){dbWarned=true;toast("Team sync needs contributor access")}}}}
-(async()=>{let db=null;try{db=window.claude?await window.claude.use("db"):null}catch(e){}
-  const st=$("syncSt");if(!db){st.textContent="Saved on this device only. Open from the shared link, signed in, to sync with your team.";return}
-  coll=db.collection("activities");
-  coll.onSnapshot(snap=>{let ch=false;snap.docChanges().forEach(c=>{const id=c.doc.id;
-    if(c.type==="removed"){if(dbC[id]!==undefined){delete dbC[id];const n=logs.length;logs=logs.filter(x=>x.id!==id);if(logs.length!==n)ch=true}}
-    else{const j=JSON.stringify(c.doc.data());if(dbC[id]===j)return;dbC[id]=j;const o=JSON.parse(j),i=logs.findIndex(x=>x.id===id);if(i>=0)logs[i]=o;else logs.push(o);ch=true}});
-    st.textContent="● Team sync on · "+logs.length+" activities";
-    if(ch){try{localStorage.setItem(KEY,JSON.stringify(logs))}catch(e){}try{renderDash();renderAct()}catch(e){}}
-    syncDb()},()=>{st.textContent="Team sync unavailable right now"})})();
+/* shared team data: Google Sheet (activities) + Google Drive (photos, videos, files) */
+const PKEY=KEY+"-pending",SKEY=KEY+"-shared",CKEY="berger-team-code";
+const lset=k=>{try{return new Set(JSON.parse(localStorage.getItem(k)||"[]"))}catch(e){return new Set()}};
+let pend=lset(PKEY),known=lset(SKEY),teamCode="";try{teamCode=localStorage.getItem(CKEY)||""}catch(e){}
+const savePend=()=>{try{localStorage.setItem(PKEY,JSON.stringify([...pend]))}catch(e){}};
+const saveKnown=()=>{try{localStorage.setItem(SKEY,JSON.stringify([...known]))}catch(e){}};
+const st=m=>{$("syncSt").textContent=m};
+function askCode(again){const c=prompt((again?"That team code didn’t work. ":"")+"Enter your team code to share activities with the team:","");if(!c||!c.trim())return false;teamCode=c.trim();try{localStorage.setItem(CKEY,teamCode)}catch(e){}return true}
+async function api(body){
+  const r=body?await fetch(SHEET_API,{method:"POST",body:JSON.stringify({...body,code:teamCode})}):await fetch(SHEET_API+"?action=list&code="+encodeURIComponent(teamCode));
+  const j=await r.json();if(!j.ok){const e=new Error(j.error||"Request failed");e.code=j.error;throw e}return j}
+const b64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(",")[1]||"");r.onerror=()=>rej(r.error);r.readAsDataURL(b)});
+async function pushOne(l){
+  const todo=(l.media||[]).filter(m=>!m.drive);let i=0;
+  for(const m of todo){const b=await mget(m.id);if(!b||b.size>MAXUP)continue;st("Uploading "+(++i)+" of "+todo.length+": "+m.name+" …");
+    try{const j=await api({action:"upload",name:m.name,mime:b.type||"",folder:[l.date,l.dist,l.shop||l.loc||l.type].filter(Boolean).join(" · "),data:await b64(b)});m.drive=j.file.id;save()}
+    catch(e){if(!e.code||e.code==="bad_code")throw e;toast(m.name+" couldn’t be shared: "+e.message)}}
+  await api({action:"upsert",activity:l})}
+async function doSync(ask){
+  if(!teamCode&&!(ask&&askCode())){st("Saved on this device only – enter the team code to share with your team.");return}
+  st("Syncing with team…");
+  try{
+    let srv=(await api()).activities||[];const sid=new Set(srv.map(x=>x.id));
+    logs.forEach(l=>{if(!sid.has(l.id)&&!known.has(l.id))pend.add(l.id)});savePend();
+    let n=0;for(const id of [...pend]){const l=logs.find(x=>x.id===id);if(l){await pushOne(l);n++}pend.delete(id);savePend()}
+    if(n)srv=(await api()).activities||[];
+    known=new Set(srv.map(x=>x.id));saveKnown();
+    const before=JSON.stringify(logs);logs=[...srv,...logs.filter(l=>pend.has(l.id)&&!known.has(l.id))].map(norm);save();
+    if(JSON.stringify(logs)!==before){if($("vDash").classList.contains("hide"))renderAct();else renderDash()}
+    st("● Team sync on · "+logs.length+" activities · updated "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}));
+  }catch(e){save();
+    if(e.code==="bad_code"){teamCode="";try{localStorage.removeItem(CKEY)}catch(_){}st("Team code not accepted – activities are saved on this device.");if(ask&&askCode(true))setTimeout(()=>syncNow(true),0);return}
+    st((pend.size?pend.size+" waiting to share · ":"")+(e.code?"Team sheet error: "+e.message:"Can’t reach the team sheet right now – will retry"))}}
+let syncP=null;
+function syncNow(ask){if(!SHEET_API)return Promise.resolve();if(syncP)return syncP.then(()=>syncNow(ask));syncP=doSync(ask).finally(()=>{syncP=null});return syncP}
+if(SHEET_API){syncNow(true);setInterval(()=>{if(!document.hidden)syncNow(false)},60000);
+  document.addEventListener("visibilitychange",()=>{if(!document.hidden)syncNow(false)});addEventListener("online",()=>syncNow(false))}
+else st("Saved on this device only. Team sharing isn’t set up yet.");
 </script>
 </body>
 </html>
